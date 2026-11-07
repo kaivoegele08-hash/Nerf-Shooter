@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backyard Wars: Bodycam</title>
+<meta name="description" content="A cinematic bodycam-style tactical foam-dart shooter. Eight friends, random teams, three lives, revives, Jürgen.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<!-- ================= HUD ================= -->
+<div id="hud" class="hidden">
+  <div id="tl">
+    <div><span id="rec">●</span> REC <span id="cam-status">· CAM OK</span></div>
+    <div id="cam-id"></div>
+    <div id="timestamp"></div>
+    <div id="loc"></div>
+  </div>
+  <div id="tr">
+    <div class="bat"><span id="battery">BAT 90%</span><span class="batbox"><span id="battery-bar"></span></span></div>
+    <div><span id="radio-ind">◉ TEAM RADIO</span> · GPS LOCK · AUD ON</div>
+    <div><span id="mode-label"></span> · <span id="map-label"></span></div>
+    <div id="event-feed"></div>
+  </div>
+  <div id="match-status"></div>
+  <div id="center-msg"></div>
+  <div id="crosshair"></div>
+  <div id="hitmarker">✕</div>
+  <div id="radio-feed"></div>
+  <div id="bl">
+    <div id="roster"></div>
+    <div class="me"><span id="lives"></span> <span id="pstatus">OK</span></div>
+    <div class="bar small"><span id="stamina-bar"></span></div>
+  </div>
+  <div id="br">
+    <div id="ammo">12 / 12</div>
+    <div id="weapon-name"></div>
+    <div class="bar"><span id="reload-bar"></span></div>
+    <div id="gear"></div>
+  </div>
+  <div id="prompt" class="hidden"><div id="prompt-text"></div><div id="prompt-bar"><span></span></div></div>
+  <div id="downed-overlay" class="hidden">
+    <div class="big">YOU ARE DOWN</div>
+    <div>You're on your knees. You can't move or shoot.</div>
+    <div id="revive-status"></div>
+    <div class="sub">Bleed-out in <span id="bleed">45</span>s</div>
+  </div>
+  <div id="spectate-overlay" class="hidden">
+    <div class="big">SPECTATING · <span id="spectate-name"></span></div>
+    <div class="sub">◀ ▶ / A D / CLICK to switch bodycam</div>
+  </div>
+  <div id="eyes-overlay" class="hidden">
+    <div class="big">EYES CLOSED</div>
+    <div>Your hand is over the bodycam lens. The hiders are getting ready...</div>
+    <div class="count" id="eyes-count">60</div>
+  </div>
+  <div id="prep-help" class="hidden">PREP PHASE · Hide, plan the ambush. <b>[F]</b> barricade · <b>[G]</b> dart trap · <b>[T]</b> tripwire alarm</div>
+  <div id="scoreboard" class="hidden"></div>
+</div>
+
+<!-- ================= MENUS ================= -->
+<div id="menu">
+  <div id="screen-title" class="screen">
+    <div class="rec-frame"><span class="dot">●</span> REC · NERFCAM X3 · BODYCAM FOOTAGE</div>
+    <h1>BACKYARD WARS</h1>
+    <h2>BODYCAM · FOAM DART TACTICAL</h2>
+    <p class="tag">Eight friends. Random teams. Three lives. One bodycam each. And somewhere in the woods: Jürgen.</p>
+    <div class="btns">
+      <button id="btn-play" class="primary">PLAY</button>
+      <button id="btn-howto">HOW TO PLAY</button>
+      <button id="btn-settings">SETTINGS</button>
+    </div>
+    <div class="foot">Headphones recommended · Click into the game to capture the mouse</div>
+  </div>
+
+  <div id="screen-char" class="screen hidden">
+    <h3>SELECT YOUR CHARACTER</h3>
+    <p class="hint">Everyone you don't pick is played by AI. Teams are randomized every round.</p>
+    <div id="char-grid"></div>
+    <div class="btns"><button class="back">BACK</button><button id="btn-char-next" class="primary" disabled>NEXT</button></div>
+  </div>
+
+  <div id="screen-mode" class="screen hidden">
+    <h3>MODE &amp; MAP</h3>
+    <div id="mode-tabs">
+      <button data-mode="tdm" class="tab active">TEAM DEATHMATCH<small>Two teams. Eliminate the opponents.</small></button>
+      <button data-mode="hunt" class="tab">HUNT<small>Hiders prepare traps &amp; ambushes. Hunters track them down.</small></button>
+    </div>
+    <div id="map-grid"></div>
+    <div class="btns"><button class="back">BACK</button><button id="btn-mode-next" class="primary">GENERATE TEAMS</button></div>
+  </div>
+
+  <div id="screen-teams" class="screen hidden">
+    <h3 id="teams-title">TEAMS</h3>
+    <p class="hint" id="teams-hint"></p>
+    <div id="teams-wrap"></div>
+    <div class="btns"><button class="back">BACK</button><button id="btn-reroll">RESHUFFLE</button><button id="btn-deploy" class="primary">DEPLOY</button></div>
+  </div>
+
+  <div id="screen-howto" class="screen hidden">
+    <h3>HOW TO PLAY</h3>
+    <div class="cols">
+      <div>
+        <h4>CONTROLS</h4>
+        <table class="keys">
+          <tr><td>WASD</td><td>Move</td></tr><tr><td>MOUSE</td><td>Look</td></tr>
+          <tr><td>LMB</td><td>Fire</td></tr><tr><td>RMB</td><td>Aim down sights</td></tr>
+          <tr><td>SHIFT</td><td>Sprint</td></tr><tr><td>C / CTRL</td><td>Crouch (hold)</td></tr>
+          <tr><td>SPACE</td><td>Jump</td></tr><tr><td>R</td><td>Reload</td></tr>
+          <tr><td>E (hold)</td><td>Revive teammate</td></tr><tr><td>Z / Q</td><td>Callout enemy / ping spot</td></tr>
+          <tr><td>1 · 2 · 3</td><td>Order: Follow me · Hold · Push</td></tr>
+          <tr><td>F · G · T</td><td>Barricade · Dart trap · Tripwire</td></tr>
+          <tr><td>H</td><td>Call for help (downed)</td></tr><tr><td>V</td><td>Taunt</td></tr>
+          <tr><td>TAB</td><td>Scoreboard</td></tr><tr><td>ESC</td><td>Pause</td></tr>
+        </table>
+      </div>
+      <div>
+        <h4>LIVES</h4>
+        <p>Everyone starts with <b>3 lives</b>. Each dart hit costs one. Lose all three and you <b>drop to your knees</b>: no moving, no shooting.</p>
+        <p>A teammate can <b>revive</b> you by holding E next to you. You come back with <b>1 life</b>. Lose that one and you're <b>out for the round</b>: you'll watch your teammates' bodycams.</p>
+        <p>Nobody comes for you within the bleed-out timer? You're out.</p>
+        <h4>MODES</h4>
+        <p><b>Team Deathmatch:</b> last team with someone standing wins. Time runs out? Most lives left wins.</p>
+        <p><b>Hunt:</b> hiders get a prep phase to hide, build barricades and set traps while the hunters count with their eyes closed. Then the hunt starts. Hiders win if anyone survives or escapes once extraction opens.</p>
+        <h4>JÜRGEN</h4>
+        <p>In Jürgen Forest a neutral man with a katana guards his base. He attacks <i>anyone</i> who enters. Hit him enough and he'll sit down for a bit. Gunfire near his fence draws him out, and you can use that to lure enemies in.</p>
+      </div>
+    </div>
+    <div class="btns"><button class="back">BACK</button></div>
+  </div>
+
+  <div id="screen-settings" class="screen hidden">
+    <h3>SETTINGS</h3>
+    <div id="settings-form"></div>
+    <div class="btns"><button class="back">BACK</button></div>
+  </div>
+
+  <div id="screen-end" class="screen hidden">
+    <div class="rec-frame"><span class="dot">●</span> FOOTAGE REVIEW</div>
+    <h1 id="end-title">VICTORY</h1>
+    <p id="end-reason"></p>
+    <div class="cols">
+      <div><h4>THE STORY OF THIS ROUND</h4><ol id="end-story"></ol><p id="end-mvp"></p></div>
+      <div><h4>SCOREBOARD</h4><table id="end-table"></table></div>
+    </div>
+    <div class="btns">
+      <button id="btn-next" class="primary">NEXT ROUND (NEW TEAMS)</button>
+      <button id="btn-change">CHANGE SETUP</button>
+      <button id="btn-menu">MAIN MENU</button>
+    </div>
+  </div>
+
+  <div id="screen-pause" class="screen hidden">
+    <h3>PAUSED</h3>
+    <div class="btns vertical">
+      <button id="btn-resume" class="primary">RESUME</button>
+      <button id="btn-pause-settings">SETTINGS</button>
+      <button id="btn-quit">QUIT TO MENU</button>
+    </div>
+  </div>
+
+  <div id="screen-loading" class="screen hidden">
+    <div class="rec-frame"><span class="dot">●</span> BOOTING BODYCAMS…</div>
+    <p id="loading-text">Syncing 8 cameras…</p>
+  </div>
+</div>
+<div id="click-to-play" class="hidden">CLICK TO CAPTURE MOUSE</div>
+<div id="err" class="hidden"></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

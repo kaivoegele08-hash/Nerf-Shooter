@@ -771,7 +771,7 @@ function buildGarden(b, info, withBasement) {
   b.vis(new THREE.CylinderGeometry(1.86, 1.86, 1.7, 24, 1, true), b.mat('tnet', { color: 0x222222, transparent: true, opacity: 0.25, side: THREE.DoubleSide }), tx, 1.75, tz, { cast: false });
   W.addBox(tx - 1.6, 0, tz - 1.6, tx + 1.6, 0.95, tz + 1.6, { surface: 'trampoline', sight: false, tag: 'trampoline' });
   // hedges (tall, sight-blocking, solid)
-  const hedgeM = b.mat('hedge', { color: 0xa8c898, map: TEX.leaves(), roughness: 1 });
+  const hedgeM = b.mat('hedge', { color: 0xe0f8d0, map: TEX.leaves(), roughness: 1, emissive: 0x0c1a08 });
   for (const [x, z, w, d] of [[-13, -2, 0.9, 7], [12, 4, 6, 0.9], [-9, 10, 6, 0.9], [9, -4, 0.9, 4], [-15.5, 7, 4, 0.9]]) b.box(x, 0, z, w, 2.0, d, hedgeM, { surface: 'leaves', ts: 1 });
   // low bushes (concealment)
   const bushM = b.mat('gbush', { color: 0xb0d0a0, map: TEX.leaves(), flatShading: true });
@@ -800,7 +800,7 @@ function buildGarden(b, info, withBasement) {
   for (let i = 0; i < 6; i++) b.vis(new THREE.IcosahedronGeometry(0.22, 0), bushM, gx - 1.8 + i * 0.7, 1.0, gz - 1.1);
   // raised beds, compost, playhouse, firewood, wheelbarrow, gnomes
   for (const [x, z] of [[0, -3], [4, 1], [-8, -1]]) { b.box(x, 0, z, 2.4, 0.45, 1.0, woodM, { surface: 'wood' }); b.floor(x - 1.1, z - 0.4, x + 1.1, z + 0.4, b.mat('soil', { map: TEX.dirt(), color: 0x6a4a30 }), 0.46, 1); }
-  b.box(-16.4, 0, 1.0, 1.6, 1.1, 1.4, b.mat('compost', { color: 0x2a3a2a }), { surface: 'plastic' });
+  b.box(-16.4, 0, 1.0, 1.6, 1.1, 1.4, b.mat('compost', { color: 0x4a5e42 }), { surface: 'plastic' });
   b.box(3, 0, 12.5, 2.0, 1.6, 1.6, b.mat('playhouse', { color: 0xe8c040 }), { surface: 'plastic' });
   b.vis(new THREE.ConeGeometry(1.6, 0.8, 4), b.mat('playroof', { color: 0xc83a2a }), 3, 2.0, 12.5, { rot: [0, Math.PI / 4, 0] });
   b.box(16.8, 0, -3, 0.8, 1.2, 3.0, b.mat('firewood', { map: TEX.bark(), color: 0xaa9070 }), { surface: 'bark' });

@@ -1,0 +1,44 @@
+name: Wii Fakemote Joy-Con (cIOS module)
+
+on:
+  push:
+    paths:
+      - 'wii-fakemote-joycon/**'
+      - '.github/workflows/wii-fakemote-joycon.yml'
+  pull_request:
+    paths:
+      - 'wii-fakemote-joycon/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkitarm:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          apt-get update -y
+          apt-get install -y g++ cmake ninja-build wget
+
+      - name: Install stripios
+        run: |
+          wget -q https://raw.githubusercontent.com/Leseratte10/d2xl-cios/master/stripios/main.cpp
+          g++ main.cpp -o stripios
+          mv stripios ${DEVKITPRO}/tools/bin
+          rm -f main.cpp
+
+      - name: Build FAKEMOTE.app
+        working-directory: wii-fakemote-joycon
+        run: |
+          git config --global --add safe.directory '*'
+          cmake --preset Release
+          cmake --build --preset Release
+
+      - name: Upload FAKEMOTE.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: FAKEMOTE-app
+          if-no-files-found: error
+          path: wii-fakemote-joycon/build/Release/FAKEMOTE.app

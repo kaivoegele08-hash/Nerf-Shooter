@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<app version="1">
+  <name>Joy-Con Bridge</name>
+  <coder>kaivoegele08-hash</coder>
+  <version>0.1</version>
+  <release_date>20261111000000</release_date>
+  <short_description>Joy-Cons mit Bewegungssteuerung</short_description>
+  <long_description>Verbindet Nintendo Switch Joy-Cons und Pro Controller per Bluetooth mit der Wii.
+Liest Tasten, Sticks, Beschleunigungssensor und Gyroskop und zeigt die Daten
+im Wii-MotionPlus-Format an. Eine echte Wii-Fernbedienung mit MotionPlus kann
+gleichzeitig verbunden werden.
+
+Joy-Con verbinden: kleine Sync-Taste an der Schiene gedrueckt halten.</long_description>
+  <ahb_access/>
+</app>

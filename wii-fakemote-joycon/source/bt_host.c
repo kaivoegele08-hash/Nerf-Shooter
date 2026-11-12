@@ -25,10 +25,11 @@
 #define USBV0_IOCTLV_BLKMSG  1
 #define EP_ACL_DATA_OUT      0x02
 
-#define CMD_QUEUE_LEN 8
-#define ACL_SLOTS     8
-#define ACL_MAX_LEN   128
-#define CMD_MAX_LEN   (3 + 255)
+#define CMD_QUEUE_LEN 6
+#define ACL_SLOTS     6
+#define ACL_MAX_LEN   64  /* Joy-Con output report: 4 ACL + 4 L2CAP + 50 */
+#define CMD_PARAM_MAX 32  /* largest: PIN code reply (23) */
+#define CMD_MAX_LEN   (3 + CMD_PARAM_MAX)
 
 /* Cancel our command if the controller never answers (~2 s @ 5 ms ticks) */
 #define CMD_TIMEOUT_TICKS 400
@@ -45,7 +46,7 @@ static bool game_cmd_outstanding;
 static struct {
     u16 opcode;
     u8 len;
-    u8 params[255];
+    u8 params[CMD_PARAM_MAX];
 } cmd_queue[CMD_QUEUE_LEN];
 static int cmd_head, cmd_count;
 
@@ -104,7 +105,7 @@ const u8 *bt_host_local_bdaddr(void)
 
 bool bt_host_send_cmd(u16 opcode, const void *params, u8 len)
 {
-    if (cmd_count >= CMD_QUEUE_LEN)
+    if (cmd_count >= CMD_QUEUE_LEN || len > CMD_PARAM_MAX)
         return false;
     int idx = (cmd_head + cmd_count) % CMD_QUEUE_LEN;
     cmd_queue[idx].opcode = opcode;
@@ -277,8 +278,11 @@ static bool strip_num_compl_pkts(u8 *params, u8 *plen)
         u16 h = HCI_CON_HANDLE(e[0] | (e[1] << 8));
         if (joycon_bt_owns_handle(h))
             continue;
-        if (out != i)
-            memmove(params + 1 + out * 4, e, 4);
+        if (out != i) {
+            u8 *d = params + 1 + out * 4; /* d < e: forward copy is safe */
+            for (int k = 0; k < 4; k++)
+                d[k] = e[k];
+        }
         out++;
     }
     if (out == n)

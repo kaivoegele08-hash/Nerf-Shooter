@@ -254,8 +254,8 @@ static void hci_disconnect(joycon_t *jc)
 
 static void l2cap_send(joycon_t *jc, u16 cid, const u8 *payload, u16 len)
 {
-    u8 buf[96];
-    if (len + 4 > sizeof(buf))
+    u8 buf[64];
+    if (len + 4 > (int)sizeof(buf))
         return;
     buf[0] = len & 0xFF;
     buf[1] = len >> 8;
@@ -267,8 +267,8 @@ static void l2cap_send(joycon_t *jc, u16 cid, const u8 *payload, u16 len)
 
 static void sig_send(joycon_t *jc, u8 code, u8 ident, const u8 *data, u16 len)
 {
-    u8 buf[64];
-    if (len + 4 > sizeof(buf))
+    u8 buf[48];
+    if (len + 4 > (int)sizeof(buf))
         return;
     buf[0] = code;
     buf[1] = ident;

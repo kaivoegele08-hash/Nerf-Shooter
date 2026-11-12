@@ -61,7 +61,7 @@ jobs:
       - name: Download d2x cIOS Installer
         run: |
           gh release view -R wiidev/d2x-cios --json tagName,assets --jq '.tagName, (.assets[].name)'
-          ASSET=$(gh release view -R wiidev/d2x-cios --json assets --jq '.assets[].name' | grep -i 'installer' | grep -vi 'vwii' | head -1)
+          ASSET=$(gh release view -R wiidev/d2x-cios --json assets --jq '.assets[].name' | grep -i '\.zip$' | grep -vi 'vwii' | head -1)
           if [ -z "$ASSET" ]; then echo "No Wii installer asset found"; exit 1; fi
           echo "Using $ASSET"
           gh release download -R wiidev/d2x-cios -p "$ASSET" -D dl

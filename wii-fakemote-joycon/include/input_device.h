@@ -24,6 +24,12 @@ void input_device_handle_added(egc_input_device_t *device, void *userdata);
 void input_device_handle_removed(egc_input_device_t *device, void *userdata);
 void input_device_handle_updated(egc_input_device_t *device, void *userdata);
 
+/** Used by non-USB input devices (e.g. Bluetooth Joy-Cons) **/
+
+input_device_t *input_device_add_custom(const input_device_ops_t *ops, void *usrdata);
+void input_device_remove_custom(input_device_t *input_device);
+fake_wiimote_t *input_device_get_wiimote(input_device_t *input_device);
+
 /** Used by fake Wiimotes and fake Wiimote manager **/
 
 input_device_t *input_device_get_unassigned(void);

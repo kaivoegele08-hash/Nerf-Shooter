@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bt_host.h"
 #include "button_map.h"
 #include "conf.h"
 #include "egc.h"
@@ -12,6 +13,7 @@
 #include "hci.h"
 #include "hci_state.h"
 #include "injmessage.h"
+#include "joycon_bt.h"
 #include "ipc.h"
 #include "l2cap.h"
 #include "mem.h"
@@ -88,6 +90,8 @@ static ipcmessage usb_intr_hand_down_msg = {
                .vector = usb_intr_hand_down_msg_ioctlvs }
 };
 static bool usb_intr_hand_down_msg_pending = false;
+static bool usb_intr_hand_down_msg_rehand = false;
+static u16 usb_intr_hand_down_msg_len;
 
 static u8 usb_bulk_in_hand_down_msg_data[HAND_DOWN_MSG_DATA_SIZE] ATTRIBUTE_ALIGN(32);
 static u8 usb_bulk_in_hand_down_msg_ioctlv_0_data = EP_ACL_DATA_IN;
@@ -107,6 +111,8 @@ static ipcmessage usb_bulk_in_hand_down_msg = {
                .vector = usb_bulk_in_hand_down_msg_ioctlvs }
 };
 static bool usb_bulk_in_hand_down_msg_pending = false;
+static bool usb_bulk_in_hand_down_msg_rehand = false;
+static u16 usb_bulk_in_hand_down_msg_len;
 
 static void *ready_usb_intr_msg_queue_data[8];
 static int ready_usb_intr_msg_queue_id;
@@ -162,6 +168,8 @@ static int handle_oh1_dev_ioctlv(ipcmessage *recv_msg, ipcmessage **ret_msg, u32
             wLength = le16toh(*(u16 *)vector[4].data);
             data = vector[6].data;
             hci_state_handle_hci_cmd_from_host(data, wLength, fwd_to_usb);
+            if (*fwd_to_usb)
+                bt_host_snoop_hci_cmd_from_host(data, wLength);
             /* If we don't have to hand it down, we can already ACK it */
             if (!*fwd_to_usb)
                 ret = os_message_queue_ack(recv_msg, wLength);
@@ -224,6 +232,10 @@ static inline void configure_hand_down_msg(ipcmessage *msg, int fd, u16 wLength)
 {
     assert(wLength <= HAND_DOWN_MSG_DATA_SIZE);
 
+    if (msg == &usb_intr_hand_down_msg)
+        usb_intr_hand_down_msg_len = wLength;
+    else if (msg == &usb_bulk_in_hand_down_msg)
+        usb_bulk_in_hand_down_msg_len = wLength;
     *(u16 *)msg->ioctlv.vector[1].data = wLength;
     msg->ioctlv.vector[2].len = wLength;
     msg->fd = fd;
@@ -318,6 +330,30 @@ static int OH1_IOS_ReceiveMessage_hook(int queueid, ipcmessage **ret_msg, u32 fl
     ensure_initalized();
 
     while (1) {
+        /* Hand down our own traffic (Joy-Con) and re-issue reads whose result we
+         * consumed, before blocking for the next request from the game */
+        if (usb_intr_hand_down_msg_rehand && !usb_intr_hand_down_msg_pending) {
+            usb_intr_hand_down_msg_rehand = false;
+            usb_intr_hand_down_msg_pending = true;
+            configure_hand_down_msg(&usb_intr_hand_down_msg, usb_intr_hand_down_msg.fd,
+                                    usb_intr_hand_down_msg_len);
+            *ret_msg = &usb_intr_hand_down_msg;
+            return IOS_OK;
+        }
+        if (usb_bulk_in_hand_down_msg_rehand && !usb_bulk_in_hand_down_msg_pending) {
+            usb_bulk_in_hand_down_msg_rehand = false;
+            usb_bulk_in_hand_down_msg_pending = true;
+            configure_hand_down_msg(&usb_bulk_in_hand_down_msg, usb_bulk_in_hand_down_msg.fd,
+                                    usb_bulk_in_hand_down_msg_len);
+            *ret_msg = &usb_bulk_in_hand_down_msg;
+            return IOS_OK;
+        }
+        ipcmessage *own_msg = bt_host_next_outgoing();
+        if (own_msg) {
+            *ret_msg = own_msg;
+            return IOS_OK;
+        }
+
         ret = os_message_queue_receive(queueid, &recv_data, flags);
         if (ret != IOS_OK) {
             LOG_DEBUG("Message queue recv err: %d\n", ret);
@@ -329,6 +365,7 @@ static int OH1_IOS_ReceiveMessage_hook(int queueid, ipcmessage **ret_msg, u32 fl
             egc_handle_events();
             input_devices_tick();
             fake_wiimote_mgr_tick_devices();
+            joycon_bt_tick();
             fwd_to_usb = false;
         } else {
             recv_msg = (ipcmessage *)recv_data;
@@ -337,6 +374,7 @@ static int OH1_IOS_ReceiveMessage_hook(int queueid, ipcmessage **ret_msg, u32 fl
             fwd_to_usb = true;
 
             if (recv_msg->command == IOS_IOCTLV) {
+                bt_host_set_fd(recv_msg->fd);
                 ioctlv *vector = recv_msg->ioctlv.vector;
                 u32 inlen = recv_msg->ioctlv.num_in;
                 u32 iolen = recv_msg->ioctlv.num_io;
@@ -375,6 +413,11 @@ static int OH1_IOS_ResourceReply_hook(ipcmessage *ready_msg, int retval)
         if (retval > 0) {
             vector = ready_msg->ioctlv.vector;
             data = vector[2].data;
+            if (bt_host_filter_hci_event(data, retval)) {
+                /* Event belonged to our own (Joy-Con) traffic: hide it and read again */
+                usb_intr_hand_down_msg_rehand = true;
+                return IOS_OK;
+            }
             hci_state_handle_hci_event_from_controller(data, retval);
         }
         ready_msg->result = retval;
@@ -391,6 +434,10 @@ static int OH1_IOS_ResourceReply_hook(ipcmessage *ready_msg, int retval)
         if (retval > 0) {
             vector = ready_msg->ioctlv.vector;
             data = vector[2].data;
+            if (bt_host_filter_acl_in(data, retval)) {
+                usb_bulk_in_hand_down_msg_rehand = true;
+                return IOS_OK;
+            }
             hci_state_handle_acl_data_in_response_from_controller(data, retval);
         }
         ready_msg->result = retval;
@@ -398,6 +445,9 @@ static int OH1_IOS_ResourceReply_hook(ipcmessage *ready_msg, int retval)
                                              ready_usb_bulk_in_msg_queue_id);
         return ret;
     }
+
+    if (bt_host_handle_reply(ready_msg, retval))
+        return IOS_OK;
 
     return os_message_queue_ack(ready_msg, retval);
 }
@@ -441,6 +491,7 @@ static int ensure_initalized(void)
         /* Initialize global state */
         injmessage_init_heap();
         hci_state_reset();
+        bt_host_init();
         input_devices_init();
         fake_wiimote_mgr_init();
         egc_initialize(input_device_handle_added, input_device_handle_removed, NULL);
@@ -587,6 +638,9 @@ int main(void)
     if (ret != sizeof(sensor_bar_position_top))
         return IOS_EINVAL;
     bm_set_sensor_bar_position_top(sensor_bar_position_top);
+
+    /* Joy-Con addresses written by the Joy-Con Bridge homebrew app */
+    joycon_bt_load_config();
 
     /* Patch SYSCONF's BT.DINF */
     ret = patch_conf_bt_dinf(conf_buffer);

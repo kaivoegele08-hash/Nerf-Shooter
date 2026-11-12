@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <ogc/isfs.h>
 
 #include "joycon.h"
 
@@ -32,6 +33,67 @@ static bool sd_ok = false;
 static void on_reset(u32 irq, void *ctx) { quit_requested = true; }
 static void on_power(void) { power_requested = true; quit_requested = true; }
 static void on_wiimote_power(s32 chan) { power_requested = true; quit_requested = true; }
+
+/* ------------------------------------------------------------------------ */
+/* Save Joy-Con addresses for the fakemote cIOS module                      */
+/* ------------------------------------------------------------------------ */
+
+#define FAKEMOTE_CONF "/shared2/fakemote_joycon.bin"
+#define FAKEMOTE_MAX  2
+
+static bool fakemote_saved[JC_MAX_CONTROLLERS];
+static char fakemote_msg[80];
+static int fakemote_msg_timer;
+
+/* Stores the address (display order) as newest entry, keeps one older one. */
+static bool save_for_fakemote(const u8 addr[6])
+{
+	static u8 buf[32] ATTRIBUTE_ALIGN(32);
+	u8 entries[FAKEMOTE_MAX][6];
+	int n = 0;
+	s32 fd, ret;
+
+	memset(entries, 0, sizeof(entries));
+	memcpy(entries[n++], addr, 6);
+
+	fd = ISFS_Open(FAKEMOTE_CONF, ISFS_OPEN_READ);
+	if (fd >= 0) {
+		memset(buf, 0, sizeof(buf));
+		ret = ISFS_Read(fd, buf, 6 * FAKEMOTE_MAX);
+		ISFS_Close(fd);
+		for (int i = 0; i + 6 <= ret && n < FAKEMOTE_MAX; i += 6) {
+			if (memcmp(buf + i, addr, 6) == 0) continue;
+			bool empty = true;
+			for (int j = 0; j < 6; j++) if (buf[i + j]) empty = false;
+			if (!empty) memcpy(entries[n++], buf + i, 6);
+		}
+	}
+
+	ISFS_Delete(FAKEMOTE_CONF);
+	ret = ISFS_CreateFile(FAKEMOTE_CONF, 0, ISFS_OPEN_RW, ISFS_OPEN_RW, ISFS_OPEN_RW);
+	if (ret < 0) return false;
+	fd = ISFS_Open(FAKEMOTE_CONF, ISFS_OPEN_WRITE);
+	if (fd < 0) return false;
+	memset(buf, 0, sizeof(buf));
+	memcpy(buf, entries, 6 * n);
+	ret = ISFS_Write(fd, buf, 6 * n);
+	ISFS_Close(fd);
+	return ret == 6 * n;
+}
+
+static void fakemote_check_new_pads(void)
+{
+	for (int i = 0; i < JC_MAX_CONTROLLERS; i++) {
+		const jc_state_t *st = JC_GetState(i);
+		if (st->status != JC_STATUS_READY) { fakemote_saved[i] = false; continue; }
+		if (fakemote_saved[i]) continue;
+		fakemote_saved[i] = true;
+		bool ok = save_for_fakemote(st->bdaddr);
+		snprintf(fakemote_msg, sizeof(fakemote_msg), "Pad %d fuer fakemote gespeichert: %s",
+		         i + 1, ok ? "OK" : "FEHLER");
+		fakemote_msg_timer = 400;
+	}
+}
 
 /* ------------------------------------------------------------------------ */
 /* Axis setup wizard                                                        */
@@ -319,6 +381,7 @@ static void draw(void)
 	printf(EOL);
 
 	if (wiz.msg_timer > 0) { printf("%s" EOL, wiz.msg); wiz.msg_timer--; }
+	if (fakemote_msg_timer > 0) { printf("%s" EOL, fakemote_msg); fakemote_msg_timer--; }
 
 	const char *lines[6];
 	int n = JC_GetLog(lines, 6);
@@ -364,6 +427,7 @@ int main(int argc, char **argv)
 	WPAD_Init();
 	WPAD_SetPowerButtonCallback(on_wiimote_power);
 	sd_ok = fatInitDefault();
+	ISFS_Initialize();
 
 	/* wait until the Bluetooth stack is up */
 	printf("\x1b[2;0HStarte Bluetooth...\n");
@@ -424,6 +488,7 @@ int main(int argc, char **argv)
 			if (scanning) JC_StartScan(); else JC_StopScan();
 		}
 
+		fakemote_check_new_pads();
 		wizard_update(wiz_confirm);
 		draw();
 		VIDEO_WaitVSync();
@@ -432,6 +497,7 @@ int main(int argc, char **argv)
 	printf("\x1b[2J\x1b[2;0HBeende...\n");
 	JC_Shutdown();
 	WPAD_Shutdown();
+	ISFS_Deinitialize();
 
 	if (power_requested) SYS_ResetSystem(SYS_POWEROFF, 0, 0);
 	return 0;

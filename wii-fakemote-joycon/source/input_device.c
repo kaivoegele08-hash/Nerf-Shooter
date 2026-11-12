@@ -75,6 +75,9 @@ static const enum bm_ir_emulation_mode_e ir_emu_modes[] = {
 
 static struct input_device_t {
     egc_input_device_t *device;
+    /* Non-USB devices: ops != NULL, device == NULL */
+    const input_device_ops_t *ops;
+    void *usrdata;
     /* NULL if no assigned fake Wiimote */
     fake_wiimote_t *assigned_wiimote;
     u32 reconnect_delay;
@@ -103,15 +106,55 @@ static input_device_t *input_device_from_egc(egc_input_device_t *device)
 
 void input_devices_init(void)
 {
-    for (int i = 0; i < ARRAY_SIZE(input_devices); i++)
+    for (int i = 0; i < ARRAY_SIZE(input_devices); i++) {
         input_devices[i].device = NULL;
+        input_devices[i].ops = NULL;
+    }
+}
+
+static inline bool slot_used(const input_device_t *d)
+{
+    return d->device || d->ops;
+}
+
+input_device_t *input_device_add_custom(const input_device_ops_t *ops, void *usrdata)
+{
+    for (int i = 0; i < ARRAY_SIZE(input_devices); i++) {
+        if (!slot_used(&input_devices[i])) {
+            input_devices[i].ops = ops;
+            input_devices[i].usrdata = usrdata;
+            input_devices[i].assigned_wiimote = NULL;
+            input_devices[i].reconnect_delay = 0;
+            input_devices[i].extension = WIIMOTE_EXT_NONE;
+            return &input_devices[i];
+        }
+    }
+    return NULL;
+}
+
+void input_device_remove_custom(input_device_t *input_device)
+{
+    fake_wiimote_t *wiimote = input_device->assigned_wiimote;
+
+    if (wiimote) {
+        fake_wiimote_release_input_device(wiimote);
+        fake_wiimote_disconnect(wiimote);
+    }
+    input_device->assigned_wiimote = NULL;
+    input_device->ops = NULL;
+    input_device->usrdata = NULL;
+}
+
+fake_wiimote_t *input_device_get_wiimote(input_device_t *input_device)
+{
+    return input_device ? input_device->assigned_wiimote : NULL;
 }
 
 void input_device_handle_added(egc_input_device_t *device, void *userdata)
 {
     /* Find a free input device slot */
     for (int i = 0; i < ARRAY_SIZE(input_devices); i++) {
-        if (!input_devices[i].device) {
+        if (!slot_used(&input_devices[i])) {
             input_devices[i].device = device;
             /* No assigned fake Wiimote yet */
             input_devices[i].assigned_wiimote = NULL;
@@ -161,7 +204,7 @@ void input_device_handle_removed(egc_input_device_t *device, void *userdata)
 void input_devices_tick(void)
 {
     for (int i = 0; i < ARRAY_SIZE(input_devices); i++) {
-        if (input_devices[i].device && !input_devices[i].assigned_wiimote) {
+        if (slot_used(&input_devices[i]) && !input_devices[i].assigned_wiimote) {
             if (input_devices[i].reconnect_delay > 0)
                 input_devices[i].reconnect_delay--;
         }
@@ -171,7 +214,7 @@ void input_devices_tick(void)
 input_device_t *input_device_get_unassigned(void)
 {
     for (int i = 0; i < ARRAY_SIZE(input_devices); i++) {
-        if (input_devices[i].device && !input_devices[i].assigned_wiimote &&
+        if (slot_used(&input_devices[i]) && !input_devices[i].assigned_wiimote &&
             input_devices[i].reconnect_delay == 0) {
             return &input_devices[i];
         }
@@ -189,32 +232,46 @@ void input_device_release_wiimote(input_device_t *input_device)
 {
     input_device->assigned_wiimote = NULL;
     input_device->reconnect_delay = RECONNECT_DELAY;
-    egc_input_device_suspend(input_device->device);
+    if (input_device->ops)
+        input_device->ops->suspend(input_device->usrdata);
+    else if (input_device->device)
+        egc_input_device_suspend(input_device->device);
 }
 
 int input_device_resume(input_device_t *input_device)
 {
+    if (input_device->ops)
+        return input_device->ops->resume(input_device->usrdata, input_device->assigned_wiimote);
     return egc_input_device_resume(input_device->device);
 }
 
 int input_device_suspend(input_device_t *input_device)
 {
+    if (input_device->ops)
+        return input_device->ops->suspend(input_device->usrdata);
     return egc_input_device_suspend(input_device->device);
 }
 
 int input_device_set_leds(input_device_t *input_device, int leds)
 {
+    if (input_device->ops)
+        return input_device->ops->set_leds(input_device->usrdata, leds);
     return egc_input_device_set_leds(input_device->device, leds);
 }
 
 int input_device_set_rumble(input_device_t *input_device, bool rumble_on)
 {
+    if (input_device->ops)
+        return input_device->ops->set_rumble(input_device->usrdata, rumble_on);
     return egc_input_device_set_rumble(input_device->device,
                                        rumble_on ? EGC_RUMBLE_MAX : EGC_RUMBLE_OFF);
 }
 
 bool input_device_report_input(input_device_t *input_device)
 {
+    if (input_device->ops)
+        return input_device->ops->report_input(input_device->usrdata);
+
     const egc_input_state_t *input = &input_device->device->state;
     fake_wiimote_t *wiimote = input_device->assigned_wiimote;
     u16 wiimote_buttons = 0;

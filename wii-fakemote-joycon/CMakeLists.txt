@@ -44,6 +44,8 @@ add_executable(fakemote
     source/libc.c
     source/wiimote_crypto.c
     source/conf.c
+    source/bt_host.c
+    source/joycon_bt.c
 )
 
 target_include_directories(fakemote PRIVATE

@@ -42,3 +42,49 @@ jobs:
           name: FAKEMOTE-app
           if-no-files-found: error
           path: wii-fakemote-joycon/build/Release/FAKEMOTE.app
+
+  installer:
+    # Ready-to-copy d2x cIOS Installer folder with FAKEMOTE.app added and
+    # ciosmaps.xml patched (bases 57 and 58).
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: FAKEMOTE-app
+          path: fakemote
+
+      - name: Download d2x cIOS Installer
+        run: |
+          gh release view -R wiidev/d2x-cios --json tagName,assets --jq '.tagName, (.assets[].name)'
+          ASSET=$(gh release view -R wiidev/d2x-cios --json assets --jq '.assets[].name' | grep -i 'installer' | grep -vi 'vwii' | head -1)
+          if [ -z "$ASSET" ]; then echo "No Wii installer asset found"; exit 1; fi
+          echo "Using $ASSET"
+          gh release download -R wiidev/d2x-cios -p "$ASSET" -D dl
+          mkdir -p pkg
+          cd pkg && unzip -q "../dl/$ASSET"
+
+      - name: Add FAKEMOTE and patch ciosmaps.xml
+        run: |
+          find pkg -maxdepth 6 | sort | head -100
+          found=0
+          for d in $(find pkg -name 'EHCI.app' -printf '%h\n' | sort -u); do
+            cp fakemote/FAKEMOTE.app "$d/"
+            echo "copied FAKEMOTE.app to $d"
+            found=1
+          done
+          [ "$found" = 1 ] || { echo "no module folder (EHCI.app) found"; exit 1; }
+          for x in $(find pkg -iname 'ciosmaps.xml'); do
+            python3 wii-fakemote-joycon/tools/patch_ciosmaps.py "$x"
+            grep -n 'FAKEMOTE\|base ios="5[78]"' "$x"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: d2x-installer-mit-fakemote
+          if-no-files-found: error
+          path: pkg/

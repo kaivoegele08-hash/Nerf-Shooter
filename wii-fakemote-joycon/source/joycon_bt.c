@@ -31,7 +31,12 @@
 
 /* Timing in 5 ms ticks */
 #define TICKS_PER_SEC        200
-#define PAGE_RETRY_TICKS     (2 * TICKS_PER_SEC)
+#define PAGE_RETRY_TICKS     (4 * TICKS_PER_SEC)
+/* Leave the game's Bluetooth start-up alone before paging the first time */
+#define PAGE_START_DELAY     (15 * TICKS_PER_SEC)
+/* Keep filtering a dropped connection's handle for a while: late events
+ * (e.g. Number Of Completed Packets) must not reach the game */
+#define ZOMBIE_TICKS         (3 * TICKS_PER_SEC)
 #define CONNECT_TIMEOUT      (12 * TICKS_PER_SEC)
 #define SUBCMD_RETRY_TICKS   60
 #define SUBCMD_MAX_TRIES     6
@@ -160,6 +165,11 @@ typedef struct {
 
 static joycon_t joycons[JOYCON_MAX_ADDRS];
 static u32 global_page_cooldown;
+static u32 ready_ticks;
+static struct {
+    u16 handle;
+    u32 ticks;
+} zombies[JOYCON_MAX_ADDRS];
 
 /* ------------------------------------------------------------------------ */
 /* Config                                                                   */
@@ -223,7 +233,21 @@ static joycon_t *find_by_handle(u16 h)
 
 bool joycon_bt_owns_handle(u16 con_handle)
 {
-    return find_by_handle(con_handle) != NULL;
+    if (find_by_handle(con_handle))
+        return true;
+    for (int i = 0; i < JOYCON_MAX_ADDRS; i++)
+        if (zombies[i].ticks && zombies[i].handle == con_handle)
+            return true;
+    return false;
+}
+
+void joycon_bt_stored_link_key(const u8 *bdaddr, const u8 *key)
+{
+    joycon_t *jc = find_by_addr(bdaddr);
+    if (jc && !jc->have_key) {
+        memcpy(jc->key, key, 16);
+        jc->have_key = true;
+    }
 }
 
 static void set_state(joycon_t *jc, jc_state_t s)
@@ -240,6 +264,11 @@ static void reset_link(joycon_t *jc)
     }
     memset(&jc->ctrl, 0, sizeof(jc->ctrl));
     memset(&jc->intr, 0, sizeof(jc->intr));
+    if (jc->state >= JS_LINKED && jc->handle != 0xFFFF) {
+        int z = jc - joycons;
+        zombies[z].handle = jc->handle;
+        zombies[z].ticks = ZOMBIE_TICKS;
+    }
     jc->handle = 0xFFFF;
     jc->auth_done = false;
     jc->buttons = 0;
@@ -783,6 +812,15 @@ void joycon_bt_tick(void)
 
     if (global_page_cooldown)
         global_page_cooldown--;
+    for (int i = 0; i < JOYCON_MAX_ADDRS; i++)
+        if (zombies[i].ticks)
+            zombies[i].ticks--;
+    if (bt_host_ready() && hci_can_request_connection()) {
+        if (ready_ticks < PAGE_START_DELAY)
+            ready_ticks++;
+    } else {
+        ready_ticks = 0;
+    }
 
     for (int i = 0; i < JOYCON_MAX_ADDRS; i++)
         if (joycons[i].state == JS_PAGING)
@@ -796,7 +834,7 @@ void joycon_bt_tick(void)
         case JS_IDLE:
             jc->idle_ticks++;
             if (!paging && !global_page_cooldown && jc->idle_ticks >= PAGE_RETRY_TICKS &&
-                bt_host_ready() && hci_can_request_connection()) {
+                ready_ticks >= PAGE_START_DELAY) {
                 start_page(jc);
                 paging = true;
                 global_page_cooldown = TICKS_PER_SEC / 2;

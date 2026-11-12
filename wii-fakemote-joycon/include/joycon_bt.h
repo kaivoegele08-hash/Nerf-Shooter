@@ -27,6 +27,7 @@ void joycon_bt_handle_acl(u16 con_handle, const u8 *data, u16 len);
 void joycon_bt_cmd_done(u16 opcode, u8 status, const u8 *params, u8 len);
 void joycon_bt_cmd_failed(u16 opcode);
 void joycon_bt_reset_all(void);
+void joycon_bt_stored_link_key(const u8 *bdaddr, const u8 *key);
 void bt_host_tick(void);
 
 #endif

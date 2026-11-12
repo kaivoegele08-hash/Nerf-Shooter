@@ -24,6 +24,8 @@ bool bt_host_handle_reply(ipcmessage *msg, int retval);
 bool bt_host_filter_hci_event(u8 *data, u32 length);
 /* Returns true if the ACL packet was consumed (must not reach the game) */
 bool bt_host_filter_acl_in(u8 *data, u32 length);
+/* True from handing our HCI command to OH1 until the controller answered it */
+bool bt_host_cmd_in_flight(void);
 /* Called for every HCI command the game sends */
 void bt_host_snoop_hci_cmd_from_host(const u8 *data, u32 length);
 

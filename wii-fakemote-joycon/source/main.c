@@ -124,6 +124,31 @@ static int ready_usb_bulk_in_msg_queue_id;
 static ipcmessage *pending_usb_bulk_in_msg_queue_data[16];
 static int pending_usb_bulk_in_msg_queue_id;
 
+/* Game HCI commands held back while one of our own commands is in flight */
+static ipcmessage *deferred_cmds[4];
+static int deferred_head, deferred_count;
+
+static bool defer_game_cmd(ipcmessage *msg)
+{
+    if (deferred_count >= (int)ARRAY_SIZE(deferred_cmds))
+        return false;
+    deferred_cmds[(deferred_head + deferred_count) % ARRAY_SIZE(deferred_cmds)] = msg;
+    deferred_count++;
+    return true;
+}
+
+static ipcmessage *next_deferred_cmd(void)
+{
+    if (!deferred_count || bt_host_cmd_in_flight())
+        return NULL;
+    ipcmessage *msg = deferred_cmds[deferred_head];
+    deferred_head = (deferred_head + 1) % ARRAY_SIZE(deferred_cmds);
+    deferred_count--;
+    bt_host_snoop_hci_cmd_from_host(msg->ioctlv.vector[6].data,
+                                    le16toh(*(u16 *)msg->ioctlv.vector[4].data));
+    return msg;
+}
+
 /* Function prototypes */
 
 static int ensure_initalized(void);
@@ -168,8 +193,15 @@ static int handle_oh1_dev_ioctlv(ipcmessage *recv_msg, ipcmessage **ret_msg, u32
             wLength = le16toh(*(u16 *)vector[4].data);
             data = vector[6].data;
             hci_state_handle_hci_cmd_from_host(data, wLength, fwd_to_usb);
-            if (*fwd_to_usb)
-                bt_host_snoop_hci_cmd_from_host(data, wLength);
+            if (*fwd_to_usb) {
+                if (bt_host_cmd_in_flight() && defer_game_cmd(recv_msg)) {
+                    /* The controller takes one command at a time: hold the
+                     * game's command until ours is answered */
+                    *fwd_to_usb = false;
+                } else {
+                    bt_host_snoop_hci_cmd_from_host(data, wLength);
+                }
+            }
             /* If we don't have to hand it down, we can already ACK it */
             if (!*fwd_to_usb)
                 ret = os_message_queue_ack(recv_msg, wLength);
@@ -232,6 +264,8 @@ static inline void configure_hand_down_msg(ipcmessage *msg, int fd, u16 wLength)
 {
     assert(wLength <= HAND_DOWN_MSG_DATA_SIZE);
 
+    /* The game's Bluetooth device fd: our own HCI/ACL traffic uses it too */
+    bt_host_set_fd(fd);
     if (msg == &usb_intr_hand_down_msg)
         usb_intr_hand_down_msg_len = wLength;
     else if (msg == &usb_bulk_in_hand_down_msg)
@@ -348,6 +382,11 @@ static int OH1_IOS_ReceiveMessage_hook(int queueid, ipcmessage **ret_msg, u32 fl
             *ret_msg = &usb_bulk_in_hand_down_msg;
             return IOS_OK;
         }
+        ipcmessage *game_cmd = next_deferred_cmd();
+        if (game_cmd) {
+            *ret_msg = game_cmd;
+            return IOS_OK;
+        }
         ipcmessage *own_msg = bt_host_next_outgoing();
         if (own_msg) {
             *ret_msg = own_msg;
@@ -374,7 +413,6 @@ static int OH1_IOS_ReceiveMessage_hook(int queueid, ipcmessage **ret_msg, u32 fl
             fwd_to_usb = true;
 
             if (recv_msg->command == IOS_IOCTLV) {
-                bt_host_set_fd(recv_msg->fd);
                 ioctlv *vector = recv_msg->ioctlv.vector;
                 u32 inlen = recv_msg->ioctlv.num_in;
                 u32 iolen = recv_msg->ioctlv.num_io;

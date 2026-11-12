@@ -93,6 +93,11 @@ void bt_host_set_fd(int fd)
     oh1_fd = fd;
 }
 
+bool bt_host_cmd_in_flight(void)
+{
+    return cmd_msg_busy || cmd_outstanding_opcode != 0;
+}
+
 bool bt_host_ready(void)
 {
     return oh1_fd >= 0 && local_bdaddr_valid;
@@ -321,6 +326,10 @@ bool bt_host_filter_hci_event(u8 *data, u32 length)
             game_cmd_outstanding = false;
         return false;
     }
+    case HCI_EVENT_RETURN_LINK_KEYS: /* num, [bdaddr(6) key(16)]... */
+        for (u8 i = 0; i < p[0] && 1 + (i + 1) * 22 <= plen; i++)
+            joycon_bt_stored_link_key(p + 1 + i * 22, p + 1 + i * 22 + 6);
+        return false;
     case HCI_EVENT_NUM_COMPL_PKTS:
         if (strip_num_compl_pkts(p, &data[1])) {
             return true;

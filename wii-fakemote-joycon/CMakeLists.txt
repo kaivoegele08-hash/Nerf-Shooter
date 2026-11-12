@@ -85,3 +85,10 @@ add_custom_command(
 )
 
 add_subdirectory(embedded-game-controller)
+
+# The module's code region is only 36 KiB: build the Joy-Con code for size
+set_source_files_properties(
+    source/bt_host.c
+    source/joycon_bt.c
+    PROPERTIES COMPILE_OPTIONS "-Os"
+)

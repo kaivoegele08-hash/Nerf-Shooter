@@ -165,33 +165,40 @@ static u32 global_page_cooldown;
 /* Config                                                                   */
 /* ------------------------------------------------------------------------ */
 
+static int num_configured;
+
+void joycon_bt_add_addr(const u8 display_order[6])
+{
+    bool zero = true;
+    for (int j = 0; j < 6; j++)
+        if (display_order[j] != 0 && display_order[j] != 0xFF)
+            zero = false;
+    if (zero || num_configured >= JOYCON_MAX_ADDRS)
+        return;
+    joycon_t *jc = &joycons[num_configured];
+    for (int j = 0; j < 6; j++)
+        jc->addr[j] = display_order[5 - j]; /* -> little endian */
+    for (int i = 0; i < num_configured; i++)
+        if (memcmp(joycons[i].addr, jc->addr, 6) == 0)
+            return; /* duplicate */
+    jc->state = JS_IDLE;
+    jc->handle = 0xFFFF;
+    jc->idle_ticks = PAGE_RETRY_TICKS;
+    num_configured++;
+}
+
 void joycon_bt_load_config(void)
 {
     static u8 buf[6 * JOYCON_MAX_ADDRS] ATTRIBUTE_ALIGN(32);
     int fd, ret;
 
-    memset(joycons, 0, sizeof(joycons));
     fd = os_open(JOYCON_CONF_PATH, IOS_OPEN_READ);
     if (fd < 0)
         return;
     ret = os_read(fd, buf, sizeof(buf));
     os_close(fd);
-    if (ret < 6)
-        return;
-
-    for (int i = 0; i < JOYCON_MAX_ADDRS && (i + 1) * 6 <= ret; i++) {
-        const u8 *a = buf + i * 6;
-        bool zero = true;
-        for (int j = 0; j < 6; j++)
-            if (a[j] != 0 && a[j] != 0xFF)
-                zero = false;
-        if (zero)
-            continue;
-        for (int j = 0; j < 6; j++)
-            joycons[i].addr[j] = a[5 - j]; /* display order -> little endian */
-        joycons[i].state = JS_IDLE;
-        joycons[i].idle_ticks = PAGE_RETRY_TICKS;
-    }
+    for (int i = 0; (i + 1) * 6 <= ret; i++)
+        joycon_bt_add_addr(buf + i * 6);
 }
 
 /* ------------------------------------------------------------------------ */

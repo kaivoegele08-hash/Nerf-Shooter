@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <ogc/isfs.h>
 
 #include "joycon.h"
 
@@ -38,47 +37,60 @@ static void on_wiimote_power(s32 chan) { power_requested = true; quit_requested 
 /* Save Joy-Con addresses for the fakemote cIOS module                      */
 /* ------------------------------------------------------------------------ */
 
-#define FAKEMOTE_CONF "/shared2/fakemote_joycon.bin"
-#define FAKEMOTE_MAX  2
+#define FAKEMOTE_MAX_JOYCONS 2
 
 static bool fakemote_saved[JC_MAX_CONTROLLERS];
 static char fakemote_msg[80];
 static int fakemote_msg_timer;
+static u8 fakemote_addrs[FAKEMOTE_MAX_JOYCONS][6];
+static char fakemote_names[FAKEMOTE_MAX_JOYCONS][64];
+static int fakemote_count;
 
-/* Stores the address (display order) as newest entry, keeps one older one. */
-static bool save_for_fakemote(const u8 addr[6])
+static bool is_joycon_name(const char *n)
 {
-	static u8 buf[32] ATTRIBUTE_ALIGN(32);
-	u8 entries[FAKEMOTE_MAX][6];
-	int n = 0;
-	s32 fd, ret;
+	return !strncmp(n, "Joy-Con", 7) || !strncmp(n, "Pro Controller", 14);
+}
 
-	memset(entries, 0, sizeof(entries));
-	memcpy(entries[n++], addr, 6);
+/* Registers the Joy-Cons in the Wii's paired-controller list (SYSCONF BT.DINF),
+ * which the fakemote cIOS module reads at boot. Entries named "Joy-Con ..." are
+ * inserted in front of fakemote's own "Fake Wiimote" entries; real Wii Remotes
+ * keep their place as long as there is room. */
+static s32 save_for_fakemote(void)
+{
+	static conf_pads pads ATTRIBUTE_ALIGN(32);
+	conf_pad_device keep[CONF_PAD_MAX_REGISTERED], fakes[CONF_PAD_MAX_REGISTERED];
+	int nkeep = 0, nfakes = 0;
+	s32 ret;
 
-	fd = ISFS_Open(FAKEMOTE_CONF, ISFS_OPEN_READ);
-	if (fd >= 0) {
-		memset(buf, 0, sizeof(buf));
-		ret = ISFS_Read(fd, buf, 6 * FAKEMOTE_MAX);
-		ISFS_Close(fd);
-		for (int i = 0; i + 6 <= ret && n < FAKEMOTE_MAX; i += 6) {
-			if (memcmp(buf + i, addr, 6) == 0) continue;
-			bool empty = true;
-			for (int j = 0; j < 6; j++) if (buf[i + j]) empty = false;
-			if (!empty) memcpy(entries[n++], buf + i, 6);
-		}
+	if (!fakemote_count) return 0;
+	ret = CONF_GetPadDevices(&pads);
+	if (ret < 0) return ret;
+	if (pads.num_registered > CONF_PAD_MAX_REGISTERED) pads.num_registered = CONF_PAD_MAX_REGISTERED;
+
+	for (int i = 0; i < pads.num_registered; i++) {
+		conf_pad_device *d = &pads.registered[i];
+		if (is_joycon_name(d->name)) continue;            /* re-added below */
+		if (strstr(d->name, "Fake Wiimote")) fakes[nfakes++] = *d;
+		else keep[nkeep++] = *d;
 	}
+	/* make room: real Wii Remotes, then our Joy-Cons, then fakemote's entries */
+	while (nkeep + fakemote_count + nfakes > CONF_PAD_MAX_REGISTERED && nkeep > 0) nkeep--;
 
-	ISFS_Delete(FAKEMOTE_CONF);
-	ret = ISFS_CreateFile(FAKEMOTE_CONF, 0, ISFS_OPEN_RW, ISFS_OPEN_RW, ISFS_OPEN_RW);
-	if (ret < 0) return false;
-	fd = ISFS_Open(FAKEMOTE_CONF, ISFS_OPEN_WRITE);
-	if (fd < 0) return false;
-	memset(buf, 0, sizeof(buf));
-	memcpy(buf, entries, 6 * n);
-	ret = ISFS_Write(fd, buf, 6 * n);
-	ISFS_Close(fd);
-	return ret == 6 * n;
+	int n = 0;
+	for (int i = 0; i < nkeep; i++) pads.registered[n++] = keep[i];
+	for (int i = 0; i < fakemote_count && n < CONF_PAD_MAX_REGISTERED; i++) {
+		memset(&pads.registered[n], 0, sizeof(pads.registered[n]));
+		memcpy(pads.registered[n].bdaddr, fakemote_addrs[i], 6); /* display order, like libogc */
+		strncpy(pads.registered[n].name, fakemote_names[i], sizeof(pads.registered[n].name) - 1);
+		n++;
+	}
+	for (int i = 0; i < nfakes && n < CONF_PAD_MAX_REGISTERED; i++) pads.registered[n++] = fakes[i];
+	for (int i = n; i < CONF_PAD_MAX_REGISTERED; i++) memset(&pads.registered[i], 0, sizeof(pads.registered[i]));
+	pads.num_registered = n;
+
+	ret = CONF_SetPadDevices(&pads);
+	if (ret < 0) return ret;
+	return CONF_SaveChanges();
 }
 
 static void fakemote_check_new_pads(void)
@@ -88,10 +100,32 @@ static void fakemote_check_new_pads(void)
 		if (st->status != JC_STATUS_READY) { fakemote_saved[i] = false; continue; }
 		if (fakemote_saved[i]) continue;
 		fakemote_saved[i] = true;
-		bool ok = save_for_fakemote(st->bdaddr);
-		snprintf(fakemote_msg, sizeof(fakemote_msg), "Pad %d fuer fakemote gespeichert: %s",
-		         i + 1, ok ? "OK" : "FEHLER");
-		fakemote_msg_timer = 400;
+
+		/* newest first, no duplicates */
+		const char *name = st->type == JC_TYPE_LEFT ? "Joy-Con (L)" :
+		                   st->type == JC_TYPE_PRO ? "Pro Controller" : "Joy-Con (R)";
+		for (int k = 0; k < fakemote_count; k++) {
+			if (!memcmp(fakemote_addrs[k], st->bdaddr, 6)) {
+				memmove(&fakemote_addrs[k], &fakemote_addrs[k + 1], (fakemote_count - k - 1) * 6);
+				memmove(&fakemote_names[k], &fakemote_names[k + 1], (fakemote_count - k - 1) * 64);
+				fakemote_count--;
+				break;
+			}
+		}
+		if (fakemote_count == FAKEMOTE_MAX_JOYCONS) fakemote_count--;
+		memmove(&fakemote_addrs[1], &fakemote_addrs[0], fakemote_count * 6);
+		memmove(&fakemote_names[1], &fakemote_names[0], fakemote_count * 64);
+		memcpy(fakemote_addrs[0], st->bdaddr, 6);
+		snprintf(fakemote_names[0], 64, "%s", name);
+		fakemote_count++;
+
+		s32 ret = save_for_fakemote();
+		if (ret >= 0)
+			snprintf(fakemote_msg, sizeof(fakemote_msg), "Pad %d fuer fakemote gespeichert: OK", i + 1);
+		else
+			snprintf(fakemote_msg, sizeof(fakemote_msg), "Pad %d fuer fakemote gespeichert: FEHLER %d",
+			         i + 1, (int)ret);
+		fakemote_msg_timer = 600;
 	}
 }
 
@@ -427,7 +461,6 @@ int main(int argc, char **argv)
 	WPAD_Init();
 	WPAD_SetPowerButtonCallback(on_wiimote_power);
 	sd_ok = fatInitDefault();
-	ISFS_Initialize();
 
 	/* wait until the Bluetooth stack is up */
 	printf("\x1b[2;0HStarte Bluetooth...\n");
@@ -497,7 +530,8 @@ int main(int argc, char **argv)
 	printf("\x1b[2J\x1b[2;0HBeende...\n");
 	JC_Shutdown();
 	WPAD_Shutdown();
-	ISFS_Deinitialize();
+	/* WPAD keeps its own copy of the pad list; write ours again after it is gone */
+	save_for_fakemote();
 
 	if (power_requested) SYS_ResetSystem(SYS_POWEROFF, 0, 0);
 	return 0;

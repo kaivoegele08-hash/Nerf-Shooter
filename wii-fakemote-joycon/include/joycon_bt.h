@@ -11,7 +11,10 @@
 #define JOYCON_CONF_PATH "/shared2/fakemote_joycon.bin"
 #define JOYCON_MAX_ADDRS 2
 
-/* Called from main() at module start (reads the config file) */
+/* Called from main() at module start. Joy-Cons come from SYSCONF BT.DINF
+ * entries named "Joy-Con ..." / "Pro Controller" (written by the Joy-Con
+ * Bridge app) and, optionally, from JOYCON_CONF_PATH. */
+void joycon_bt_add_addr(const u8 display_order[6]);
 void joycon_bt_load_config(void);
 
 /* Called from the periodic 5 ms timer */

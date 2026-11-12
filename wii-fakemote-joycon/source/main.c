@@ -639,7 +639,17 @@ int main(void)
         return IOS_EINVAL;
     bm_set_sensor_bar_position_top(sensor_bar_position_top);
 
-    /* Joy-Con addresses written by the Joy-Con Bridge homebrew app */
+    /* Joy-Con addresses registered by the Joy-Con Bridge homebrew app */
+    {
+        static struct conf_pads_setting pads;
+        if (conf_get(conf_buffer, "BT.DINF", &pads, sizeof(pads)) == sizeof(pads)) {
+            for (int i = 0; i < pads.num_registered && i < CONF_PAD_MAX_REGISTERED; i++) {
+                const char *n = pads.registered[i].name;
+                if (!memcmp(n, "Joy-Con", 7) || !memcmp(n, "Pro Controller", 14))
+                    joycon_bt_add_addr((const u8 *)&pads.registered[i].bdaddr);
+            }
+        }
+    }
     joycon_bt_load_config();
 
     /* Patch SYSCONF's BT.DINF */
